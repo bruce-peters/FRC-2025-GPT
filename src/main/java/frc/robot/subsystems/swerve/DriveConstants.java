@@ -190,7 +190,7 @@ public class DriveConstants {
   public static final PIDAutoAlignControllerConstants PID_AUTOALIGN_CONSTANTS =
       switch (getRobotType()) {
         case COMP -> new PIDAutoAlignControllerConstants(
-            7, 0, 0, 2, 3); /* FIXME: tune these constants */
+            7, 0, 0, 3, 3); /* FIXME: tune these constants */
         case SIM -> new PIDAutoAlignControllerConstants(10, 0, 0, 5, 2);
         default -> new PIDAutoAlignControllerConstants(0, 0, 0, 0, 0);
       };

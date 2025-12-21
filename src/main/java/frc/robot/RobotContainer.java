@@ -17,6 +17,7 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.FunctionalCommand;
 import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.ParallelCommandGroup;
+import edu.wpi.first.wpilibj2.command.RunCommand;
 import edu.wpi.first.wpilibj2.command.SequentialCommandGroup;
 import edu.wpi.first.wpilibj2.command.WaitCommand;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
@@ -24,6 +25,7 @@ import edu.wpi.first.wpilibj2.command.button.Trigger;
 import frc.robot.Constants.Mode;
 import frc.robot.commands.ApproachReef;
 import frc.robot.commands.ApproachReef.LevelOffsets;
+import frc.robot.commands.IntakeObjectCommand;
 import frc.robot.commands.ScoreL1Command;
 import frc.robot.commands.VibrateHIDCommand;
 import frc.robot.mcp.MCPServer;
@@ -31,23 +33,19 @@ import frc.robot.mcp.MCPToolSchemas;
 import frc.robot.mcp.MCPTools;
 import frc.robot.subsystems.canWatchdog.CANWatchdog;
 import frc.robot.subsystems.canWatchdog.CANWatchdogIO;
-import frc.robot.subsystems.canWatchdog.CANWatchdogIOComp;
 import frc.robot.subsystems.claw.ClawRollers;
 import frc.robot.subsystems.claw.ClawRollers.ClawRollersTarget;
 import frc.robot.subsystems.claw.ClawRollersController;
 import frc.robot.subsystems.claw.ClawRollersController.ClawState;
 import frc.robot.subsystems.claw.ClawRollersIO;
 import frc.robot.subsystems.claw.ClawRollersIOSim;
-import frc.robot.subsystems.claw.ClawRollersIOTalonFX;
 import frc.robot.subsystems.climb.ClimbController;
 import frc.robot.subsystems.climb.climbPivot.ClimbPivot;
 import frc.robot.subsystems.climb.climbPivot.ClimbPivotIO;
 import frc.robot.subsystems.climb.climbPivot.ClimbPivotIOSim;
-import frc.robot.subsystems.climb.climbPivot.ClimbPivotIOTalonFX;
 import frc.robot.subsystems.climb.climbRollers.ClimbRollers;
 import frc.robot.subsystems.climb.climbRollers.ClimbRollersIO;
 import frc.robot.subsystems.climb.climbRollers.ClimbRollersIOSim;
-import frc.robot.subsystems.climb.climbRollers.ClimbRollersIOTalonFX;
 import frc.robot.subsystems.climb.climb_sensors.ClimbSensorIOBeambreak;
 import frc.robot.subsystems.climb.climb_sensors.ClimbSensors;
 import frc.robot.subsystems.intake.IntakeController;
@@ -70,6 +68,9 @@ import frc.robot.subsystems.l1_pivot.L1PivotController;
 import frc.robot.subsystems.l1_pivot.L1PivotIO;
 import frc.robot.subsystems.l1_pivot.L1PivotIOSim;
 import frc.robot.subsystems.l1_pivot.L1PivotIOTalonFX;
+import frc.robot.subsystems.objectDetection.ObjectDetection;
+import frc.robot.subsystems.objectDetection.ObjectDetectionIOLimelight;
+import frc.robot.subsystems.objectDetection.ObjectDetectionIOSim;
 import frc.robot.subsystems.rgb.RGB;
 import frc.robot.subsystems.rgb.RGBIO;
 import frc.robot.subsystems.superstructure.SuperstructureController;
@@ -77,11 +78,9 @@ import frc.robot.subsystems.superstructure.SuperstructureController.Superstructu
 import frc.robot.subsystems.superstructure.arm.Arm;
 import frc.robot.subsystems.superstructure.arm.ArmIO;
 import frc.robot.subsystems.superstructure.arm.ArmIOSim;
-import frc.robot.subsystems.superstructure.arm.ArmIOTalonFX;
 import frc.robot.subsystems.superstructure.elevator.Elevator;
 import frc.robot.subsystems.superstructure.elevator.ElevatorIO;
 import frc.robot.subsystems.superstructure.elevator.ElevatorIOSim;
-import frc.robot.subsystems.superstructure.elevator.ElevatorIOTalonFX;
 import frc.robot.subsystems.swerve.Drive;
 import frc.robot.subsystems.swerve.DriveConstants;
 import frc.robot.subsystems.swerve.GyroIO;
@@ -92,7 +91,6 @@ import frc.robot.subsystems.swerve.ModuleIOTalonFXReal;
 import frc.robot.subsystems.swerve.ModuleIOTalonFXSim;
 import frc.robot.subsystems.vision.Vision;
 import frc.robot.subsystems.vision.VisionIO;
-import frc.robot.subsystems.vision.VisionIOPhotonvision;
 import frc.robot.subsystems.vision.VisionIOPhotonvisionSim;
 import java.util.function.BooleanSupplier;
 import org.ironmaple.simulation.SimulatedArena;
@@ -128,6 +126,7 @@ public class RobotContainer {
   private Vision vision;
   private RGB rgb;
   private CANWatchdog canWatchdog;
+  private ObjectDetection objectDetection;
   private IntakeRollers intakeRollers;
   private IntakePivot intakePivot;
   private IntakeController intakeController;
@@ -157,11 +156,11 @@ public class RobotContainer {
                   new ModuleIOTalonFXReal(DriveConstants.MODULE_CONFIGS[1]),
                   new ModuleIOTalonFXReal(DriveConstants.MODULE_CONFIGS[2]),
                   new ModuleIOTalonFXReal(DriveConstants.MODULE_CONFIGS[3]));
-          vision =
-              new Vision(
-                  new VisionIOPhotonvision("arducam-5", 1),
-                  new VisionIOPhotonvision("arducam-4", 2));
-          canWatchdog = new CANWatchdog(new CANWatchdogIOComp(), rgb);
+          // vision =
+          //     new Vision(
+          //         new VisionIOPhotonvision("arducam-5", 1),
+          //         new VisionIOPhotonvision("arducam-4", 2));
+          // canWatchdog = new CANWatchdog(new CANWatchdogIOComp(), rgb);
           l1Pivot = new L1Pivot(new L1PivotIOTalonFX());
           intakeRollers = new IntakeRollers(new IntakeRollersIOTalonFX());
           intakePivot = new IntakePivot(new IntakePivotIOTalonFX());
@@ -171,12 +170,13 @@ public class RobotContainer {
                   new IntakeSensorIOCANRange(IntakeSensorsConstants.PORT_ID_1),
                   new IntakeSensorIOCANRange(IntakeSensorsConstants.PORT_ID_2));
 
-          elevator = new Elevator(new ElevatorIOTalonFX());
-          arm = new Arm(new ArmIOTalonFX());
-          clawRollers = new ClawRollers(new ClawRollersIOTalonFX());
-          climbPivot = new ClimbPivot(new ClimbPivotIOTalonFX());
-          climbRollers = new ClimbRollers(new ClimbRollersIOTalonFX());
-          climbSensors = new ClimbSensors(new ClimbSensorIOBeambreak());
+          // elevator = new Elevator(new ElevatorIOTalonFX());
+          // arm = new Arm(new ArmIOTalonFX());
+          // clawRollers = new ClawRollers(new ClawRollersIOTalonFX());
+          // climbPivot = new ClimbPivot(new ClimbPivotIOTalonFX());
+          // climbRollers = new ClimbRollers(new ClimbRollersIOTalonFX());
+          // climbSensors = new ClimbSensors(new ClimbSensorIOBeambreak());
+          objectDetection = new ObjectDetection(new ObjectDetectionIOLimelight());
         }
         case SIM -> {
           SwerveDriveSimulation driveSimulation = RobotSimState.getInstance().getDriveSimulation();
@@ -210,7 +210,7 @@ public class RobotContainer {
           elevator = new Elevator(new ElevatorIOSim());
           arm = new Arm(new ArmIOSim());
           clawRollers = new ClawRollers(new ClawRollersIOSim());
-          SimulatedArena.getInstance().resetFieldForAuto();
+          objectDetection = new ObjectDetection(new ObjectDetectionIOSim());
         }
       }
     }
@@ -283,6 +283,10 @@ public class RobotContainer {
     superstructureController = new SuperstructureController(elevator, arm);
 
     clawRollersController = new ClawRollersController(clawRollers);
+
+    if (objectDetection == null) {
+      objectDetection = new ObjectDetection(new ObjectDetectionIOLimelight());
+    }
 
     nameCommands();
     configureAutos();
@@ -563,6 +567,26 @@ public class RobotContainer {
 
     driverA.start().onTrue(swerve.zeroGyroCommand());
 
+    driverA.a().onTrue(new InstantCommand(() -> swerve.smartZeroGyro()));
+
+    // align to the object
+    driverB
+        .leftTrigger()
+        .whileTrue(
+            new RunCommand(
+                () -> {
+                  if (objectDetection.coralInVision()) {
+                    swerve.setTargetHeading(objectDetection.getTargetRotation());
+                  }
+                },
+                objectDetection,
+                swerve));
+
+    // approach the object and intake
+    driverB
+        .rightTrigger()
+        .whileTrue(new IntakeObjectCommand(swerve, objectDetection, intakeController));
+
     // auto align
     driverA
         .leftBumper()
@@ -636,7 +660,7 @@ public class RobotContainer {
     driverB
         .leftTrigger()
         .onFalse(intakeController.setTargetStateCommand(IntakeController.IntakeState.INTAKE));
-    driverB.rightTrigger().onTrue(new ScoreL1Command(intakeController, l1PivotController));
+    driverB.leftBumper().onTrue(new ScoreL1Command(intakeController, l1PivotController));
   }
 
   private void configureMultiUseButtons() {
@@ -652,9 +676,9 @@ public class RobotContainer {
     driverB
         .rightBumper()
         .onTrue(intakeController.setTargetStateCommand(IntakeController.IntakeState.HOLD));
-    driverB
-        .leftBumper()
-        .onTrue(superstructureController.setSuperstructureStateCommand(SuperstructureState.TOP));
+    // driverB
+    //     .leftBumper()
+    //     .onTrue(superstructureController.setSuperstructureStateCommand(SuperstructureState.TOP));
   }
 
   private void configureAlgaeButtons() {
