@@ -434,6 +434,33 @@ public class RobotContainer {
           }
 
           result.put("reefs", reefInfo);
+
+          // Add object detection information (coral detection)
+          JSONObject objectDetectionInfo = new JSONObject();
+          boolean coralDetected = objectDetection.coralInVision();
+          objectDetectionInfo.put("coral_detected", coralDetected);
+
+          if (coralDetected) {
+            Pose2d coralTargetPose = objectDetection.getTargetPosition();
+            double distanceToCoralMeters =
+                currentPose.getTranslation().getDistance(coralTargetPose.getTranslation());
+
+            JSONObject coralPosition = new JSONObject();
+            coralPosition.put("x", coralTargetPose.getX());
+            coralPosition.put("y", coralTargetPose.getY());
+            coralPosition.put("rotation_degrees", objectDetection.getTargetRotation().getDegrees());
+            coralPosition.put("distance_meters", distanceToCoralMeters);
+
+            objectDetectionInfo.put("coral_position", coralPosition);
+            objectDetectionInfo.put(
+                "coral_distance_x_meters", objectDetection.getCoralDistanceX().in(Units.Meters));
+            objectDetectionInfo.put(
+                "coral_distance_y_meters", objectDetection.getCoralDistanceY().in(Units.Meters));
+            objectDetectionInfo.put(
+                "angle_to_coral_degrees", objectDetection.getAngleToTarget().in(Units.Degrees));
+          }
+
+          result.put("object_detection", objectDetectionInfo);
           result.put("success", true);
 
           return result;
@@ -506,6 +533,38 @@ public class RobotContainer {
 
           JSONObject result = MCPTools.successResponse();
           result.put("message", "Robot stopped");
+          return result;
+        });
+
+    // Register IntakeClosestObject tool (drives to and picks up detected coral)
+    mcpTools.registerTool(
+        "IntakeClosestObject",
+        "Drives the robot to the closest detected coral object and intakes it. Uses object detection camera to locate the coral, then approaches and picks it up automatically.",
+        MCPTools.createInputSchema(new JSONObject()), // No parameters needed
+        (args) -> {
+          // Check if object is detected
+          if (!objectDetection.coralInVision()) {
+            JSONObject error = new JSONObject();
+            error.put("success", false);
+            error.put("error", "No coral detected in camera view");
+            return error;
+          }
+
+          // Get target position info
+          Pose2d targetPose = objectDetection.getTargetPosition();
+          Pose2d currentPose = RobotState.getInstance().getEstimatedPose();
+          double distance = currentPose.getTranslation().getDistance(targetPose.getTranslation());
+
+          // Schedule the IntakeObjectCommand
+          Command intakeObjectCommand =
+              new IntakeObjectCommand(swerve, objectDetection, intakeController);
+          intakeObjectCommand.schedule();
+
+          JSONObject result = MCPTools.successResponse();
+          result.put("message", "Approaching and intaking coral");
+          result.put("target_x", targetPose.getX());
+          result.put("target_y", targetPose.getY());
+          result.put("distance_meters", distance);
           return result;
         });
   }

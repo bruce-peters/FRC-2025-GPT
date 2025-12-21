@@ -36,7 +36,18 @@ public class ApproachObjectCommand extends SequentialCommandGroup {
               swerve.clearTargetPositionController();
             },
             () -> {
-              return false;
+              // Finish when we're close to the target or lost sight of coral
+              if (!objectDetection.coralInVision()) {
+                return true; // Lost sight, finish command
+              }
+
+              Pose2d currentPose = frc.robot.RobotState.getInstance().getEstimatedPose();
+              Pose2d currentTarget = objectDetection.getTargetPosition();
+              double distanceError =
+                  currentPose.getTranslation().getDistance(currentTarget.getTranslation());
+
+              // Finish when within 30cm of target (close enough for intake to grab)
+              return distanceError < 0.3;
             },
             swerve,
             objectDetection));
