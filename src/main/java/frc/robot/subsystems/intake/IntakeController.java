@@ -1,5 +1,10 @@
 package frc.robot.subsystems.intake;
 
+import edu.wpi.first.math.geometry.Pose3d;
+import edu.wpi.first.math.geometry.Rotation3d;
+import edu.wpi.first.math.geometry.Transform3d;
+import edu.wpi.first.math.geometry.Translation3d;
+import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
@@ -103,6 +108,41 @@ public class IntakeController extends SubsystemBase {
     intakeSensors.periodic();
 
     Logger.recordOutput("Rollers/TargetState", targetState);
+    Logger.recordOutput("Intake/IntakePivot/Pose3d", getIntakePivotPose());
+  }
+
+  /**
+   * Gets the robot-relative 3D pose of the intake pivot end effector. Calculates the position based
+   * on the intake pivot angle (measured above horizontal) and the intake pivot length. Useful for
+   * displaying in simulation software.
+   *
+   * @return The robot-relative Pose3d of the intake pivot end position
+   */
+  public Pose3d getIntakePivotPose() {
+    // Get intake pivot angle in degrees (above horizontal)
+    double pivotAngleDegrees = intakePivot.getPosition();
+
+    // Convert to radians for calculation
+    double pivotAngleRadians = Math.toRadians(pivotAngleDegrees);
+
+    // Create 3D transform from robot center to intake end
+    // Rotation shows the pivot angle for visualization
+    Transform3d intakeTransform =
+        new Transform3d(
+            new Translation3d(
+                Units.inchesToMeters(-11.190786),
+                Units.inchesToMeters(0),
+                Units.inchesToMeters(8.355)),
+            new Rotation3d(
+                0,
+                pivotAngleRadians - Math.toRadians(120), // arbitrary offset to match CAD
+                0) // Negative because pitch is around Y axis
+            );
+
+    // Return robot-relative pose (starts at origin)
+    Pose3d intakePose = new Pose3d().plus(intakeTransform);
+
+    return intakePose;
   }
 
   /**

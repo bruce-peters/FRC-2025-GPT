@@ -6,10 +6,7 @@ import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.auto.NamedCommands;
 import com.pathplanner.lib.config.RobotConfig;
 import edu.wpi.first.math.MathUtil;
-import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.math.geometry.Translation2d;
-import edu.wpi.first.units.Units;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
@@ -29,8 +26,15 @@ import frc.robot.commands.IntakeObjectCommand;
 import frc.robot.commands.ScoreL1Command;
 import frc.robot.commands.VibrateHIDCommand;
 import frc.robot.mcp.MCPServer;
-import frc.robot.mcp.MCPToolSchemas;
 import frc.robot.mcp.MCPTools;
+import frc.robot.mcp.tools.DriveToPointTool;
+import frc.robot.mcp.tools.GetRobotStatusTool;
+import frc.robot.mcp.tools.IntakeClosestObjectTool;
+import frc.robot.mcp.tools.MoveRelativeTool;
+import frc.robot.mcp.tools.RotateRobotTool;
+import frc.robot.mcp.tools.ScanForCoralTool;
+import frc.robot.mcp.tools.SetSuperstructureStateTool;
+import frc.robot.mcp.tools.StopRobotTool;
 import frc.robot.subsystems.canWatchdog.CANWatchdog;
 import frc.robot.subsystems.canWatchdog.CANWatchdogIO;
 import frc.robot.subsystems.claw.ClawRollers;
@@ -95,7 +99,6 @@ import frc.robot.subsystems.vision.VisionIOPhotonvisionSim;
 import java.util.function.BooleanSupplier;
 import org.ironmaple.simulation.SimulatedArena;
 import org.ironmaple.simulation.drivesims.SwerveDriveSimulation;
-import org.json.simple.JSONObject;
 import org.littletonrobotics.junction.AutoLogOutput;
 import org.littletonrobotics.junction.Logger;
 import org.littletonrobotics.junction.networktables.LoggedDashboardChooser;
@@ -203,8 +206,8 @@ public class RobotContainer {
           climbPivot = new ClimbPivot(new ClimbPivotIOSim());
           climbRollers = new ClimbRollers(new ClimbRollersIOSim());
 
-          intakeRollers = new IntakeRollers(new IntakeRollersIOSim());
           intakePivot = new IntakePivot(new IntakePivotIOSim());
+          intakeRollers = new IntakeRollers(new IntakeRollersIOSim(intakePivot));
           l1Pivot = new L1Pivot(new L1PivotIOSim());
           intakeSensors = new IntakeSensors(new IntakeSensorIOSim(), new IntakeSensorIOSim());
           elevator = new Elevator(new ElevatorIOSim());
@@ -294,279 +297,38 @@ public class RobotContainer {
     configureMCP();
   }
 
+  /**
+   * Helper method to schedule a command and wait for it to finish. This is used by MCP tools to
+   * ensure commands complete before returning.
+   */
+  public void scheduleAndWait(Command command) {
+    command.schedule();
+
+    // Wait for the command to finish (poll until it's no longer scheduled)
+    // Use a spin-wait without sleep to avoid blocking the scheduler
+    while (command.isScheduled()) {
+      // Busy-wait - this is necessary because we're in a different thread
+      // from the command scheduler. The scheduler runs in the main robot thread.
+      Thread.yield(); // Give other threads a chance to run
+    }
+  }
+
   public void configureMCP() {
     MCPServer mcpServer = new MCPServer(this, 3000);
     mcpServer.start();
 
     MCPTools mcpTools = mcpServer.getTools();
-    // register the custom tools
 
-    // drive to point tool
+    // Register all MCP tools
+    mcpTools.registerTool(new DriveToPointTool(this, swerve));
+    mcpTools.registerTool(new RotateRobotTool(this, swerve));
+    mcpTools.registerTool(new MoveRelativeTool(this, swerve));
+    mcpTools.registerTool(new GetRobotStatusTool(superstructureController, objectDetection));
+    mcpTools.registerTool(new SetSuperstructureStateTool(this, superstructureController));
+    mcpTools.registerTool(new StopRobotTool(swerve));
     mcpTools.registerTool(
-        "DriveToPoint",
-        "Drives the robot to a specified field point",
-        MCPToolSchemas.getDriveToPointScheama(),
-        (JSONObject args) -> {
-          double x = ((Number) args.get("x")).doubleValue();
-          double y = ((Number) args.get("y")).doubleValue();
-          double theta = ((Number) args.get("theta")).doubleValue();
-
-          Pose2d targetPose = new Pose2d(x, y, new Rotation2d(theta));
-
-          Command driveCommand =
-              new FunctionalCommand(
-                  () -> swerve.setTargetPosition(targetPose),
-                  () -> {},
-                  (interrupted) -> swerve.clearTargetPositionController(),
-                  () -> {
-                    // Check if we're close enough to the target
-                    Pose2d currentPose = RobotState.getInstance().getEstimatedPose();
-                    double distanceError =
-                        currentPose.getTranslation().getDistance(targetPose.getTranslation());
-                    double angleError =
-                        Math.abs(
-                            currentPose.getRotation().minus(targetPose.getRotation()).getRadians());
-                    return distanceError < 0.05
-                        && angleError < Math.toRadians(5); // 5cm and 5 degrees tolerance
-                  },
-                  swerve);
-
-          driveCommand.schedule();
-
-          JSONObject result = MCPTools.successResponse();
-          result.put(
-              "message",
-              "Driving to position: x="
-                  + x
-                  + ", y="
-                  + y
-                  + ", theta="
-                  + Math.toDegrees(theta)
-                  + "°");
-          return result;
-        });
-
-    // get robot status tool
-    mcpTools.registerTool(
-        "GetRobotStatus",
-        "Gets the current position of the robot and state of the superstructure",
-        MCPTools.createInputSchema(new JSONObject()),
-        (JSONObject args) -> {
-          // Get robot pose
-          Pose2d currentPose = RobotState.getInstance().getEstimatedPose();
-
-          // Get superstructure state
-          SuperstructureController.SuperstructureState superstructureState =
-              superstructureController.getSuperstructureState();
-          SuperstructureController.SuperstructurePose currentSuperstructurePose =
-              superstructureController.getCurrentSuperstructurePose();
-          SuperstructureController.SuperstructurePose targetSuperstructurePose =
-              superstructureController.getTargetSuperstructurePose();
-          boolean atTarget = superstructureController.superstructureReachedTarget();
-
-          // Build response
-          JSONObject result = new JSONObject();
-
-          // Robot position
-          JSONObject robotPose = new JSONObject();
-          robotPose.put("x", currentPose.getX());
-          robotPose.put("y", currentPose.getY());
-          robotPose.put("rotation_degrees", currentPose.getRotation().getDegrees());
-          robotPose.put("rotation_radians", currentPose.getRotation().getRadians());
-          result.put("robot_pose", robotPose);
-
-          // Superstructure current state
-          JSONObject superstructureInfo = new JSONObject();
-          superstructureInfo.put("state", superstructureState.toString());
-          superstructureInfo.put("at_target", atTarget);
-
-          JSONObject currentPoseInfo = new JSONObject();
-          currentPoseInfo.put(
-              "elevator_height_inches", currentSuperstructurePose.elevatorHeight.in(Units.Inches));
-          currentPoseInfo.put(
-              "arm_angle_degrees", currentSuperstructurePose.armAngle.in(Units.Degrees));
-          currentPoseInfo.put("arm_direction", currentSuperstructurePose.armDirection.toString());
-          superstructureInfo.put("current_pose", currentPoseInfo);
-
-          JSONObject targetPoseInfo = new JSONObject();
-          targetPoseInfo.put(
-              "elevator_height_inches", targetSuperstructurePose.elevatorHeight.in(Units.Inches));
-          targetPoseInfo.put(
-              "arm_angle_degrees", targetSuperstructurePose.armAngle.in(Units.Degrees));
-          targetPoseInfo.put("arm_direction", targetSuperstructurePose.armDirection.toString());
-          superstructureInfo.put("target_pose", targetPoseInfo);
-
-          result.put("superstructure", superstructureInfo);
-
-          // Add reef positions and distances (for obstacle avoidance)
-          JSONObject reefInfo = new JSONObject();
-
-          // Blue reef position (constant)
-          Translation2d blueReefCenter = DriveConstants.BLUE_REEF_ORIGIN;
-          JSONObject blueReef = new JSONObject();
-          blueReef.put("x", blueReefCenter.getX());
-          blueReef.put("y", blueReefCenter.getY());
-          blueReef.put("alliance", "BLUE");
-          double distanceToBlueReef = currentPose.getTranslation().getDistance(blueReefCenter);
-          blueReef.put("distance_meters", distanceToBlueReef);
-          reefInfo.put("blue_reef", blueReef);
-
-          // Red reef position (mirrored on field)
-          // Field is symmetric, so red reef is at (17.573 - 4.5, 4.025)
-          Translation2d redReefCenter =
-              new Translation2d(
-                  RobotState.fieldSizeX - blueReefCenter.getX(), blueReefCenter.getY());
-          JSONObject redReef = new JSONObject();
-          redReef.put("x", redReefCenter.getX());
-          redReef.put("y", redReefCenter.getY());
-          redReef.put("alliance", "RED");
-          double distanceToRedReef = currentPose.getTranslation().getDistance(redReefCenter);
-          redReef.put("distance_meters", distanceToRedReef);
-          reefInfo.put("red_reef", redReef);
-
-          // Add closest reef information
-          if (distanceToBlueReef < distanceToRedReef) {
-            reefInfo.put("closest_reef", "BLUE");
-            reefInfo.put("closest_reef_distance_meters", distanceToBlueReef);
-          } else {
-            reefInfo.put("closest_reef", "RED");
-            reefInfo.put("closest_reef_distance_meters", distanceToRedReef);
-          }
-
-          result.put("reefs", reefInfo);
-
-          // Add object detection information (coral detection)
-          JSONObject objectDetectionInfo = new JSONObject();
-          boolean coralDetected = objectDetection.coralInVision();
-          objectDetectionInfo.put("coral_detected", coralDetected);
-
-          if (coralDetected) {
-            Pose2d coralTargetPose = objectDetection.getTargetPosition();
-            double distanceToCoralMeters =
-                currentPose.getTranslation().getDistance(coralTargetPose.getTranslation());
-
-            JSONObject coralPosition = new JSONObject();
-            coralPosition.put("x", coralTargetPose.getX());
-            coralPosition.put("y", coralTargetPose.getY());
-            coralPosition.put("rotation_degrees", objectDetection.getTargetRotation().getDegrees());
-            coralPosition.put("distance_meters", distanceToCoralMeters);
-
-            objectDetectionInfo.put("coral_position", coralPosition);
-            objectDetectionInfo.put(
-                "coral_distance_x_meters", objectDetection.getCoralDistanceX().in(Units.Meters));
-            objectDetectionInfo.put(
-                "coral_distance_y_meters", objectDetection.getCoralDistanceY().in(Units.Meters));
-            objectDetectionInfo.put(
-                "angle_to_coral_degrees", objectDetection.getAngleToTarget().in(Units.Degrees));
-          }
-
-          result.put("object_detection", objectDetectionInfo);
-          result.put("success", true);
-
-          return result;
-        });
-
-    // set superstructure state tool
-    mcpTools.registerTool(
-        "SetSuperstructureState",
-        "Sets the target state of the superstructure (elevator and arm)",
-        MCPToolSchemas.getSetSuperstructureStateSchema(),
-        (JSONObject args) -> {
-          String stateString = (String) args.get("state");
-
-          // Check if still zeroing
-          if (superstructureController.getSuperstructureState()
-              == SuperstructureController.SuperstructureState.ZEROING) {
-            JSONObject error = new JSONObject();
-            error.put("success", false);
-            error.put(
-                "error",
-                "Superstructure is still zeroing. Please wait for zeroing to complete before setting state.");
-            error.put("current_state", "ZEROING");
-            return error;
-          }
-
-          // Try to parse the state
-          SuperstructureController.SuperstructureState targetState;
-          try {
-            targetState =
-                SuperstructureController.SuperstructureState.valueOf(stateString.toUpperCase());
-          } catch (IllegalArgumentException e) {
-            JSONObject error = new JSONObject();
-            error.put("success", false);
-            error.put("error", "Invalid state: " + stateString);
-            error.put(
-                "valid_states", "STOW, TOP, L2_ALGAE, L3_ALGAE, GROUND_ALGAE, BARGE_RIGHT, CLIMB");
-            return error;
-          }
-
-          // Prevent setting to ZEROING state
-          if (targetState == SuperstructureController.SuperstructureState.ZEROING) {
-            JSONObject error = new JSONObject();
-            error.put("success", false);
-            error.put("error", "Cannot manually set ZEROING state");
-            return error;
-          }
-
-          // Schedule the command to set the state and wait for completion
-          Command setSuperstructureCommand =
-              superstructureController.setSuperstructureStateCommand(targetState);
-          setSuperstructureCommand.schedule();
-
-          JSONObject result = MCPTools.successResponse();
-          result.put("message", "Setting superstructure state to: " + targetState.toString());
-          result.put("state", targetState.toString());
-
-          return result;
-        });
-
-    // Register StopRobot tool (stops both drivebase and superstructure)
-    mcpTools.registerTool(
-        "StopRobot",
-        "Stops all robot movement immediately. Stops both the drivebase and superstructure (elevator and arm).",
-        MCPTools.createInputSchema(new JSONObject()), // No parameters needed
-        (args) -> {
-          // Stop the drivebase by setting speeds to zero
-          swerve.setTrajectorySpeeds(new edu.wpi.first.math.kinematics.ChassisSpeeds(0, 0, 0));
-          swerve.clearTargetPositionController();
-          swerve.clearHeadingControl();
-
-          JSONObject result = MCPTools.successResponse();
-          result.put("message", "Robot stopped");
-          return result;
-        });
-
-    // Register IntakeClosestObject tool (drives to and picks up detected coral)
-    mcpTools.registerTool(
-        "IntakeClosestObject",
-        "Drives the robot to the closest detected coral object and intakes it. Uses object detection camera to locate the coral, then approaches and picks it up automatically.",
-        MCPTools.createInputSchema(new JSONObject()), // No parameters needed
-        (args) -> {
-          // Check if object is detected
-          if (!objectDetection.coralInVision()) {
-            JSONObject error = new JSONObject();
-            error.put("success", false);
-            error.put("error", "No coral detected in camera view");
-            return error;
-          }
-
-          // Get target position info
-          Pose2d targetPose = objectDetection.getTargetPosition();
-          Pose2d currentPose = RobotState.getInstance().getEstimatedPose();
-          double distance = currentPose.getTranslation().getDistance(targetPose.getTranslation());
-
-          // Schedule the IntakeObjectCommand
-          Command intakeObjectCommand =
-              new IntakeObjectCommand(swerve, objectDetection, intakeController);
-          intakeObjectCommand.schedule();
-
-          JSONObject result = MCPTools.successResponse();
-          result.put("message", "Approaching and intaking coral");
-          result.put("target_x", targetPose.getX());
-          result.put("target_y", targetPose.getY());
-          result.put("distance_meters", distance);
-          return result;
-        });
+        new IntakeClosestObjectTool(this, swerve, objectDetection, intakeController));
+    mcpTools.registerTool(new ScanForCoralTool(this, swerve, objectDetection));
   }
 
   public void containerMatchStarting() {

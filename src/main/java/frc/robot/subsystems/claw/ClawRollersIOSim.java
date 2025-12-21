@@ -1,13 +1,11 @@
 package frc.robot.subsystems.claw;
 
-import static edu.wpi.first.units.Units.MetersPerSecond;
 import static frc.robot.subsystems.claw.ClawRollersConstants.*;
 
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.math.system.plant.LinearSystemId;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.simulation.FlywheelSim;
-import frc.robot.RobotSimState;
 import frc.robot.lib.generic_subsystems.rollers.*;
 
 public class ClawRollersIOSim extends GenericRollersIOSim implements ClawRollersIO {
@@ -46,8 +44,8 @@ public class ClawRollersIOSim extends GenericRollersIOSim implements ClawRollers
     inputs.appliedVolts = appliedVoltage;
     inputs.supplyCurrentAmps = talon.getSimState().getSupplyCurrent();
 
-    // Update robot sim state
-    RobotSimState.getInstance()
-        .updateCoralPosition(MetersPerSecond.of(ROLLER_CIRCUMFERENCE * velocityRPS));
+    // // Update robot sim state
+    // RobotSimState.getInstance()
+    //     .updateCoralPosition(MetersPerSecond.of(ROLLER_CIRCUMFERENCE * velocityRPS));
   }
 }
