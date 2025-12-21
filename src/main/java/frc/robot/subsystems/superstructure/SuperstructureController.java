@@ -368,6 +368,7 @@ public class SuperstructureController extends SubsystemBase {
       }
     } else {
       elevator.setPositionTargetManual(targetPose.elevatorHeight.in(Units.Inches));
+      elevator.setZeroing(false);
     }
     arm.setPositionTargetManual(
         absoluteToRelativeTarget(targetPose.armAngle, currentPose, targetPose.armDirection));

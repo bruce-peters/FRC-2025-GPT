@@ -18,7 +18,7 @@ public class ElevatorConstants {
         case COMP -> new ElevatorConfig(
             CAN.at(41, "Elevator 1"), CAN.at(39, "Elevator 2"), 1 / (1.125 * Math.PI / 3));
         case SIM -> new ElevatorConfig(
-            CAN.at(43, "Elevator 1"), CAN.at(44, "Elevator 2"), 1 / (1.125 * Math.PI / 3));
+            CAN.at(41, "Elevator 1"), CAN.at(39, "Elevator 2"), 1 / (1.125 * Math.PI / 3));
         default -> new ElevatorConfig(0, 0, 1.6875); // FIXME
       };
 
@@ -26,14 +26,15 @@ public class ElevatorConstants {
       switch (Constants.getRobotType()) {
         case COMP -> new PIDGains(
             4, 0, 0, 0, 0.1558, 0.00469, 0.0); // CHANGE VALUES WHEN CAD FINISHES
-        case SIM -> new PIDGains(1.5, 0, 0, 0, 0.07, 0.00, 0.31); // CHANGE VALUES WHEN CAD FINISHES
+        case SIM -> new PIDGains(
+            4, 0, 0, 0, 0.1558, 0.00469, 0.0); // CHANGE VALUES WHEN CAD FINISHES
         default -> new PIDGains(1.5, 0, 0, 0, 0, 0, 0);
       };
 
   public static final MotionMagicConfig MOTION_MAGIC_CONFIG =
       switch (Constants.getRobotType()) {
         case COMP -> new MotionMagicConfig(200, 200, 0);
-        case SIM -> new MotionMagicConfig(100, 100, 0);
+        case SIM -> new MotionMagicConfig(200, 200, 0);
         default -> new MotionMagicConfig(0, 0, 0);
       };
 
@@ -68,7 +69,7 @@ public class ElevatorConstants {
 
   public static final double ZEROING_VOLTAGE_THRESHOLD =
       switch (Constants.getRobotType()) {
-        case SIM -> 5;
+        case SIM -> 1.5;
         default -> 15;
       };
 
