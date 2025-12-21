@@ -57,10 +57,12 @@ def call_robot_tool(tool_name, arguments):
     try:
         url = f"{ROBOT_URL}/mcp/v1/tools/call"
         print(f"Calling robot tool at: {url}")
+        # Use longer timeout for ScanForCoral which can take time
+        timeout = 60 if tool_name == "ScanForCoral" else 10
         response = requests.post(
             url,
             json={"name": tool_name, "arguments": arguments},
-            timeout=10
+            timeout=timeout
         )
         response.raise_for_status()
         return response.json()
@@ -68,6 +70,17 @@ def call_robot_tool(tool_name, arguments):
         return {"error": f"Request error: {str(e)}", "url": url}
     except Exception as e:
         return {"error": str(e)}
+
+def get_robot_status():
+    """Get current robot status from MCP server"""
+    try:
+        result = call_robot_tool("GetRobotStatus", {})
+        if "error" in result:
+            return None
+        return result
+    except Exception as e:
+        print(f"Failed to get robot status: {e}")
+        return None
 
 def chat_with_robot(user_message, conversation_history=None):
     """Send a message to the AI and execute any tool calls"""
@@ -86,43 +99,44 @@ def chat_with_robot(user_message, conversation_history=None):
     # Create system message explaining the robot's capabilities
     system_message = {
         "role": "system",
-        "content": """You are controlling an FRC robot. Your ONLY goal is to collect as much coral as possible. KEEP WORKING until you run out of iterations.
+        "content": """You are an AI assistant that can control an FRC robot. 
 
-TOOLS:
-- GetRobotStatus: Shows position, detected coral, reef distances
-- ScanForCoral: Rotates 360° while scanning for coral. Returns true if coral found.
-- DriveToPoint: Move to x,y,theta coordinates
-- IntakeClosestObject: Pick up detected coral
-- StopRobot: DO NOT USE THIS - keep exploring!
+IMPORTANT: First, determine if the user is asking you to control the robot or just asking a general question:
+- If it's a GENERAL question (like "what's your favorite color?", "tell me a joke", etc.) → Just answer the question normally WITHOUT using any tools
+- If it's a ROBOT CONTROL request (like "collect coral", "drive to position", "scan for objects") → Use the available tools to complete the task
 
-FIELD: 16.54m x 8.21m
-- Coral locations: Scattered on edges (y<2m or y>6m) and corners
-- Reefs at x≈4.5 and x≈13, y≈4 (AVOID!)
+Before calling any robot tool, briefly explain your reasoning in 2-3 sentences MAX. Be concise - just state what you observe and what action you'll take.
 
-EXACT STRATEGY TO FOLLOW:
-1. GetRobotStatus - check if coral is already detected
-2. IF coral detected → IntakeClosestObject immediately, then go to step 1
-3. IF NO coral detected → ScanForCoral (this rotates 360° looking for coral)
-4. IF ScanForCoral found coral → IntakeClosestObject, then go to step 1
-5. IF ScanForCoral found nothing → DriveToPoint to a NEW location far away (at least 5+ meters):
-   - Good exploration spots: (2,1,0), (14,1,0), (2,7,180), (14,7,180), (8,1,90), (8,7,90)
-   - Pick a spot you haven't visited recently
-   - After driving, go back to step 1
-6. IF any reef < 2.5m → DriveToPoint away to safe area (y=1 or y=7) first
+ROBOT STATUS: The current robot status (position, coral detection, reef distances) is automatically provided before every decision when working on robot tasks. You don't need to call GetRobotStatus - the info is already in the context!
 
-CRITICAL RULES:
-- NEVER call StopRobot - always keep exploring and collecting coral
-- Use ScanForCoral instead of manually rotating - it's one call and checks the whole circle
-- If ScanForCoral returns coral_detected=false, you MUST move to a new location
-- Move far distances (5+ meters) between scans to explore new areas
-- Pick up coral immediately when detected or found by scan
-- After picking up coral, check status again (there might be more nearby!)
-- Keep track of where you've been and explore different areas
+AVAILABLE TOOLS (only use for robot control tasks):
+- GetRobotStatus: Get current position, superstructure state, detected objects, and reef distances (usually not needed - status is auto-provided)
+- ScanForCoral: Rotates 360° while scanning for coral. Returns true if coral found and its position.
+- IntakeClosestObject: Drives to the closest detected coral and picks it up automatically
+- DriveToPoint: Move to x,y,theta coordinates (field-absolute)
+- MoveRelative: Move forward/left relative to robot's current orientation
+- RotateRobot: Rotate by a specified number of degrees
+- SetSuperstructureState: Set elevator/arm state (STOW, L2_ALGAE, L3_ALGAE, etc.)
+- StopRobot: Emergency stop all movement
 
-EXAMPLE WORKFLOW:
-GetRobotStatus(no coral) → ScanForCoral(coral_detected=false) → DriveToPoint(14,1,0) → GetRobotStatus(no coral) → ScanForCoral(coral_detected=true) → IntakeClosestObject → GetRobotStatus → repeat
+FIELD INFORMATION:
+- Field size: 16.54m x 8.21m
+- Coral locations: Typically scattered on edges (y<2m or y>6m) and corners
+- Reefs: Blue reef at x≈4.5, Red reef at x≈13, both at y≈4
+- Avoid getting too close to reefs unless scoring
 
-Always use ScanForCoral when you don't see coral! NEVER STOP - keep collecting coral!"""
+CORAL COLLECTION TIPS (if that's the user's goal):
+- When coral_detected=true in status → use IntakeClosestObject (it drives AND intakes)
+- When no coral visible → use ScanForCoral to look around
+- If ScanForCoral finds nothing → DriveToPoint to explore new areas (edges/corners)
+- Move at least 5+ meters between exploration spots
+- IntakeClosestObject handles both driving to and picking up coral
+
+GENERAL TIPS:
+- Keep reasoning brief (2-3 sentences before each action)
+- Use the robot status to make informed decisions
+- If a command fails or robot gets stuck, try a different approach
+- Keep working on robot tasks until complete or you run out of iterations"""
     }
     
     # Agentic loop - keep calling tools until the AI is done
@@ -133,38 +147,84 @@ Always use ScanForCoral when you don't see coral! NEVER STOP - keep collecting c
         while iteration < max_iterations:
             iteration += 1
             
-            # Call OpenAI API
-            response = client.chat.completions.create(
+            # Get current robot status and inject it as context
+            robot_status = get_robot_status()
+            status_context = ""
+            if robot_status:
+                status_context = f"\n\nCURRENT ROBOT STATUS:\n{json.dumps(robot_status, indent=2)}"
+            
+            # Add status context to the most recent message for the AI
+            messages_with_status = [system_message] + conversation_history.copy()
+            if messages_with_status and messages_with_status[-1]["role"] == "user":
+                messages_with_status[-1] = {
+                    "role": "user",
+                    "content": messages_with_status[-1]["content"] + status_context
+                }
+            elif status_context:
+                # If last message isn't user, append as new user message
+                messages_with_status.append({"role": "user", "content": status_context})
+            
+            # Call OpenAI API with streaming enabled
+            stream = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[system_message] + conversation_history,
+                messages=messages_with_status,
                 tools=tools if tools else None,
-                tool_choice="auto" if tools else None
+                tool_choice="auto" if tools else None,
+                stream=True
             )
             
-            message = response.choices[0].message
+            # Collect streamed response
+            message_content = ""
+            tool_calls_data = []
+            current_tool_call = None
+            
+            print(f"\n[AI thinking (iteration {iteration})]: ", end="", flush=True)
+            
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                
+                # Stream text content (reasoning)
+                if delta.content:
+                    print(delta.content, end="", flush=True)
+                    message_content += delta.content
+                
+                # Collect tool calls
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        if tc_delta.index is not None:
+                            # New tool call starting
+                            while len(tool_calls_data) <= tc_delta.index:
+                                tool_calls_data.append({
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""}
+                                })
+                            current_tool_call = tool_calls_data[tc_delta.index]
+                        
+                        if current_tool_call is not None:
+                            if tc_delta.id:
+                                current_tool_call["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    current_tool_call["function"]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    current_tool_call["function"]["arguments"] += tc_delta.function.arguments
+            
+            print()  # New line after streaming
             
             # If AI wants to use tools
-            if message.tool_calls:
+            if tool_calls_data:
                 # Add assistant message with tool calls to history
                 conversation_history.append({
                     "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        } for tc in message.tool_calls
-                    ]
+                    "content": message_content if message_content else None,
+                    "tool_calls": tool_calls_data
                 })
                 
                 # Execute each tool call
-                for tool_call in message.tool_calls:
-                    tool_name = tool_call.function.name
-                    arguments = json.loads(tool_call.function.arguments)
+                for tool_call in tool_calls_data:
+                    tool_name = tool_call["function"]["name"]
+                    arguments = json.loads(tool_call["function"]["arguments"])
                     
                     print(f"\nExecuting: {tool_name}({json.dumps(arguments)})")
                     
@@ -175,18 +235,37 @@ Always use ScanForCoral when you don't see coral! NEVER STOP - keep collecting c
                     # Add tool result to conversation
                     conversation_history.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": tool_call["id"],
                         "content": json.dumps(result)
                     })
                 
                 # Continue the loop to let AI decide if it needs more tools
-                print(f"\nAI is thinking... (iteration {iteration}/{max_iterations})")
                 
             else:
-                # No more tool calls, AI is done
-                assistant_message = message.content
-                conversation_history.append({"role": "assistant", "content": assistant_message})
-                return assistant_message, conversation_history
+                # No tool calls - just reasoning or final answer
+                if message_content:
+                    # Check if AI is indicating it will take an action but didn't make a tool call
+                    action_indicators = ["let's", "i'll", "i will", "going to", "will now", "will execute"]
+                    is_planning_action = any(indicator in message_content.lower() for indicator in action_indicators)
+                    
+                    if is_planning_action and iteration < max_iterations:
+                        # AI said it would do something but didn't make a tool call
+                        # Add the message and prompt it to actually make the call
+                        conversation_history.append({"role": "assistant", "content": message_content})
+                        conversation_history.append({
+                            "role": "user", 
+                            "content": "Please execute the tool call now (don't just describe what you'll do)."
+                        })
+                        print("[Prompting AI to execute tool...]")
+                        continue
+                    else:
+                        # Final answer or non-action message
+                        conversation_history.append({"role": "assistant", "content": message_content})
+                        return message_content, conversation_history
+                else:
+                    # Empty response, continue
+                    continue
+                    continue
         
         # If we hit max iterations, return what we have
         final_message = "Reached maximum iterations. Task may be incomplete."

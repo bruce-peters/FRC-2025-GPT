@@ -6,6 +6,7 @@ import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.auto.NamedCommands;
 import com.pathplanner.lib.config.RobotConfig;
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
@@ -203,6 +204,34 @@ public class RobotContainer {
                       "arducam-5", 2, driveSimulation::getSimulatedDriveTrainPose));
 
           SimulatedArena.getInstance().resetFieldForAuto();
+
+          // Spawn 10 random coral around the field for AI testing
+          java.util.Random random = new java.util.Random();
+          for (int i = 0; i < 20; i++) {
+            // Random positions around the field edges (avoid center where reefs are)
+            double x, y;
+            if (random.nextBoolean()) {
+              // Spawn on left or right edges
+              x =
+                  random.nextBoolean()
+                      ? random.nextDouble() * 2.5
+                      : (RobotState.fieldSizeX - random.nextDouble() * 2.5);
+              y = random.nextDouble() * RobotState.fieldSizeY;
+            } else {
+              // Spawn on top or bottom edges
+              x = random.nextDouble() * RobotState.fieldSizeX;
+              y =
+                  random.nextBoolean()
+                      ? random.nextDouble() * 2.0
+                      : (RobotState.fieldSizeY - random.nextDouble() * 2.0);
+            }
+
+            Rotation2d randomRotation = Rotation2d.fromDegrees(random.nextDouble() * 360);
+            SimulatedArena.getInstance()
+                .addGamePiece(
+                    new org.ironmaple.simulation.seasonspecific.reefscape2025.ReefscapeCoralOnField(
+                        new Pose2d(x, y, randomRotation)));
+          }
           climbPivot = new ClimbPivot(new ClimbPivotIOSim());
           climbRollers = new ClimbRollers(new ClimbRollersIOSim());
 
