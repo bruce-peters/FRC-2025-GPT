@@ -82,8 +82,13 @@ class RobotMCPClient:
             )
             if response.status_code == 200:
                 data = response.json()
-                print(f"✓ Tool '{tool_name}' executed successfully")
-                return data.get('content')
+                content = data.get('content')
+                # The server reports tool errors (e.g. unknown tool) inside 'content' with HTTP 200
+                if isinstance(content, dict) and 'error' in content:
+                    print(f"✗ Tool '{tool_name}' returned an error: {content.get('error')}")
+                else:
+                    print(f"✓ Tool '{tool_name}' executed successfully")
+                return content
             else:
                 print(f"✗ Tool call failed with status {response.status_code}")
                 print(f"  Response: {response.text}")
@@ -96,8 +101,8 @@ class RobotMCPClient:
         """Generic method to call any tool with keyword arguments
         
         Example:
-            client.call_any_tool("get_robot_pose")
-            client.call_any_tool("drive_robot", xSpeed=0.5, ySpeed=0.0, rotSpeed=0.0, duration=1.0)
+            client.call_any_tool("GetRobotStatus")
+            client.call_any_tool("DriveToPoint", x=4.5, y=4.0, theta=1.57)
         """
         print(f"\n→ Calling tool '{tool_name}'...")
         if kwargs:
@@ -152,26 +157,30 @@ def demo_robot_control():
     print("\n\nDemonstrating tool calls...")
     
     try:
-        # Example tool calls (adapt based on what's registered)
-        print("\n1. Calling 'get_robot_pose' (if available)...")
-        client.call_any_tool("get_robot_pose")
-        
-        print("\n2. Calling 'get_subsystem_status' (if available)...")
-        client.call_any_tool("get_subsystem_status")
-        
-        # Drive example
-        print("\n⚠️  About to call 'drive_robot' tool...")
+        # Example tool calls (these names match the tools registered in RobotContainer.configureMCP)
+        print("\n1. Calling 'GetRobotStatus'...")
+        status = client.call_any_tool("GetRobotStatus")
+
+        pose = status.get('robot_pose') if isinstance(status, dict) else None
+        if not pose:
+            print("\nCould not read the robot pose; skipping the drive example.")
+            return
+
+        # Drive example: move 0.5 m along the field X axis, keeping the current heading
+        target_x = pose['x'] + 0.5
+        print(f"\n⚠️  About to call 'DriveToPoint' (x={target_x:.2f}, y={pose['y']:.2f})...")
+        print("    The robot only moves while it is enabled (Teleoperated/Autonomous in the sim GUI).")
         confirmation = input("Continue? (y/n): ")
         if confirmation.lower() == 'y':
-            client.call_any_tool("drive_robot", xSpeed=0.5, ySpeed=0.0, rotSpeed=0.0, duration=1.0)
+            client.call_any_tool("DriveToPoint", x=target_x, y=pose['y'], theta=pose['rotation_radians'])
             time.sleep(1.5)
-            
+
             # Stop
-            client.call_any_tool("stop_all")
-        
+            client.call_any_tool("StopRobot")
+
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrupted! Stopping robot...")
-        client.call_any_tool("stop_all")
+        client.call_any_tool("StopRobot")
 
 def interactive_mode():
     """Interactive command-line interface with dynamic tool support"""

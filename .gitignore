@@ -183,3 +183,8 @@ src/main/java/frc/robot/BuildConstants.java
 gradle.properties
 
 ctre_sim/
+
+# Python (mcp_client.py, openai_robot_control.py)
+__pycache__/
+.venv/
+.env
