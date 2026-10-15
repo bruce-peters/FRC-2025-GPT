@@ -75,10 +75,11 @@ class RobotMCPClient:
                 "name": tool_name,
                 "arguments": arguments
             }
+            # Motion tools (DriveToPoint, ScanForCoral, ...) reply only after the motion finishes
             response = requests.post(
                 f"{self.base_url}/mcp/v1/tools/call",
                 json=payload,
-                timeout=10
+                timeout=60
             )
             if response.status_code == 200:
                 data = response.json()
@@ -86,6 +87,8 @@ class RobotMCPClient:
                 # The server reports tool errors (e.g. unknown tool) inside 'content' with HTTP 200
                 if isinstance(content, dict) and 'error' in content:
                     print(f"✗ Tool '{tool_name}' returned an error: {content.get('error')}")
+                elif isinstance(content, dict) and content.get('success') is False:
+                    print(f"✗ Tool '{tool_name}' did not succeed: {content.get('message', '')}")
                 else:
                     print(f"✓ Tool '{tool_name}' executed successfully")
                 return content
@@ -102,7 +105,7 @@ class RobotMCPClient:
         
         Example:
             client.call_any_tool("GetRobotStatus")
-            client.call_any_tool("DriveToPoint", x=4.5, y=4.0, theta=1.57)
+            client.call_any_tool("DriveToPoint", x=4.5, y=4.0, theta=90)
         """
         print(f"\n→ Calling tool '{tool_name}'...")
         if kwargs:
@@ -172,7 +175,7 @@ def demo_robot_control():
         print("    The robot only moves while it is enabled (Teleoperated/Autonomous in the sim GUI).")
         confirmation = input("Continue? (y/n): ")
         if confirmation.lower() == 'y':
-            client.call_any_tool("DriveToPoint", x=target_x, y=pose['y'], theta=pose['rotation_radians'])
+            client.call_any_tool("DriveToPoint", x=target_x, y=pose['y'], theta=pose['rotation_degrees'])
             time.sleep(1.5)
 
             # Stop

@@ -22,21 +22,21 @@ public class IntakePivotConstants {
           // is the reduction for the encoder)
         case SIM -> new IntakePivotConfig(
             // Reduction between motor and mechansim
-            CAN.at(8, "Intake Pivot"), 0, 0, 12 * 0.3750);
+            CAN.at(30, "Intake Pivot"), CAN.at(31, "Intake Pivot Encoder"), -0.01444, 2.25);
         default -> new IntakePivotConfig(0, 0, 0, 1);
       };
 
   public static final PIDGains GAINS =
       switch (Constants.getRobotType()) {
         case COMP -> new PIDGains(60, 0, 0, 0, 2.265488, 0.1, 0.4);
-        case SIM -> new PIDGains(40, 0, 0, 0, 3.6144, 0.1807, 0.53);
+        case SIM -> new PIDGains(60, 0, 0, 0, 2.265488, 0.1, 0.4);
         default -> new PIDGains(0, 0, 0, 0, 0, 0, 0);
       };
 
   public static final MotionMagicConfig MOTION_MAGIC_CONFIG =
       switch (Constants.getRobotType()) {
         case COMP -> new MotionMagicConfig(6, 10);
-        case SIM -> new MotionMagicConfig(7.5, 10);
+        case SIM -> new MotionMagicConfig(6, 10);
         default -> new MotionMagicConfig(0, 0);
       };
 
@@ -88,7 +88,7 @@ public class IntakePivotConstants {
 
   public static final IntakePivotPhysicalConstants PHYSICAL_CONSTANTS =
       switch (Constants.getRobotType()) {
-        case SIM -> new IntakePivotPhysicalConstants(0.02, 0.706747, -1000.0, 1000, true);
+        case SIM -> new IntakePivotPhysicalConstants(0.001, 0.706747, -1000.0, 1000, true);
         case COMP -> new IntakePivotPhysicalConstants(0.1, 0, 0, 0, false);
         default -> new IntakePivotPhysicalConstants(0.1, 0, 0, 0, false);
       };

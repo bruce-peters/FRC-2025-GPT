@@ -1,12 +1,12 @@
 # FRC-2025-GPT (SIM-2025)
 
-FRC robot code for Iron Panthers (Team 5026), with an embedded MCP-style server that lets an AI agent observe and control the robot in real time.
+FRC robot code for Iron Panthers (Team 5026), with an embedded MCP-style server and a GPT agent that observe and control the robot in real time.
 
-> Fork of [Iron-Panthers/FRC-2025-Sprint](https://github.com/Iron-Panthers/FRC-2025-Sprint), the Iron Panthers' 2025 robot/simulation codebase. The robot code (drive, superstructure, intake, vision, object detection) is the team's work; the MCP server, its tools, and the Python client (`src/main/java/frc/robot/mcp/`, `configureMCP()` in `RobotContainer.java`, `mcp_client.py`) were added in this fork.
+> Fork of [Iron-Panthers/FRC-2025-Sprint](https://github.com/Iron-Panthers/FRC-2025-Sprint), the Iron Panthers' 2025 robot/simulation codebase. The robot code (drive, superstructure, intake, vision, object detection) is the team's work; the MCP server, its tools, the Python client and the GPT agent (`src/main/java/frc/robot/mcp/`, `configureMCP()` in `RobotContainer.java`, `mcp_client.py`, `openai_robot_control.py`) were added in this fork.
 
 ## What it does
 
-This is the software that runs on the Iron Panthers competition robot for the 2025 FRC REEFSCAPE game. It controls the drivetrain, superstructure (elevator and arm), intake, claw, climb mechanism, and vision systems. On top of the standard robot code, it includes a custom HTTP server modeled on the Model Context Protocol (MCP): `initialize`, `tools/list` and `tools/call` endpoints that speak plain JSON. This lets an external AI agent (like a GPT-based system) connect over the network, read live robot state, and issue commands — drive to a position, change the superstructure state, or stop the robot entirely. The goal is to close the loop between AI reasoning and real robot actuation.
+This is the software that runs on the Iron Panthers competition robot for the 2025 FRC REEFSCAPE game. It controls the drivetrain, superstructure (elevator and arm), intake, claw, climb mechanism, and vision systems. On top of the standard robot code, it includes a custom HTTP server modeled on the Model Context Protocol (MCP): `initialize`, `tools/list` and `tools/call` endpoints that speak plain JSON. This lets an external AI agent connect over the network, read live robot state, and issue commands: drive to a position, rotate, scan for and pick up coral, change the superstructure state, or stop the robot entirely. `openai_robot_control.py` is such an agent: a GPT-4o-mini chat loop that turns plain-English requests ("collect a coral") into tool calls. The goal is to close the loop between AI reasoning and real robot actuation.
 
 ## Features
 
@@ -16,6 +16,8 @@ This is the software that runs on the Iron Panthers competition robot for the 20
 - Object detection via Limelight for coral/algae game pieces
 - Embedded MCP server (port 3000) for AI agent integration
 - Dynamic tool registration: any subsystem can register MCP tools at runtime
+- 8 MCP tools: status, drive-to-point, relative move, rotate, coral scan, auto-intake, superstructure state, stop
+- GPT-4o-mini agent (`openai_robot_control.py`) that plans and calls those tools from natural-language requests
 - Python client (`mcp_client.py`) for connecting, listing tools, and calling them interactively
 - AdvantageKit logging for full log replay and simulation
 - WPILib simulation support (`./gradlew simulateJava`)
@@ -24,9 +26,12 @@ This is the software that runs on the Iron Panthers competition robot for the 20
 ## How it works
 
 ```
-  LLM agent (GPT)                     mcp_client.py              curl / any HTTP client
-  openai_robot_control.py             (interactive CLI,
-  [feat/mcp-robot branch]              Python API)
+  OpenAI API (GPT-4o-mini)
+          ^
+          | function calling
+  openai_robot_control.py             mcp_client.py              curl / any HTTP client
+  (agent loop)                        (interactive CLI,
+                                       Python API)
           |                                 |                            |
           +---------------------------------+----------------------------+
                                             |
@@ -35,10 +40,15 @@ This is the software that runs on the Iron Panthers competition robot for the 20
   +-----------------------------------------v------------------------------------------+
   |  Robot process  (real roboRIO, or desktop via ./gradlew simulateJava)              |
   |                                                                                    |
-  |  MCPServer.java  --->  MCPTools registry  --->  DriveToPoint     -> Drive (swerve) |
-  |  (HttpServer,          (registered in           GetRobotStatus   -> RobotState,    |
-  |   4-thread pool)        RobotContainer           SetSuperstructureState            |
-  |                         .configureMCP())        StopRobot        -> Drive          |
+  |  MCPServer.java  --->  MCPTools registry  --->  mcp/tools/*Tool.java              |
+  |  (HttpServer,          (registered in           DriveToPoint, MoveRelative,       |
+  |   4-thread pool)        RobotContainer           RotateRobot, StopRobot -> Drive  |
+  |                         .configureMCP())        ScanForCoral, IntakeClosestObject |
+  |                                                  -> Drive + ObjectDetection +      |
+  |                                                     Intake                         |
+  |                                                  SetSuperstructureState,           |
+  |                                                  GetRobotStatus -> Superstructure, |
+  |                                                     RobotState, ObjectDetection    |
   |                                                                                    |
   |  WPILib command loop (20 ms)  <---  commands scheduled by the tools                |
   |  AdvantageKit Logger  --->  NT4Publisher (NetworkTables, port 5810)                |
@@ -50,18 +60,22 @@ This is the software that runs on the Iron Panthers competition robot for the 20
                               (live field / mechanism view)
 ```
 
-- The MCP server is a `com.sun.net.httpserver.HttpServer` started from `RobotContainer.configureMCP()`. Each tool is a lambda that captures live subsystem objects; tools that move the robot build a WPILib `Command` and `schedule()` it, so the motion runs in the next 20 ms robot cycles.
+- The MCP server is a `com.sun.net.httpserver.HttpServer` started from `RobotContainer.configureMCP()`. Each tool is a class in `src/main/java/frc/robot/mcp/tools/` that holds references to the live subsystems. Tools that move the robot build a WPILib `Command`, schedule it, and wait for it to finish (`RobotContainer.scheduleAndWait`). The HTTP reply therefore comes back after the motion ends, with the final pose and a `success` / `reached_target` flag.
 - NetworkTables is used only for telemetry (AdvantageKit → AdvantageScope). The AI path is plain HTTP.
-- The transport is JSON over plain HTTP paths, not the JSON-RPC transport used by stock MCP clients (Claude Desktop, etc.), so those clients cannot connect directly; use `mcp_client.py`, the agent script on `feat/mcp-robot`, or `curl`.
+- The transport is JSON over plain HTTP paths, not the JSON-RPC transport used by stock MCP clients (Claude Desktop, etc.), so those clients cannot connect directly; use `openai_robot_control.py`, `mcp_client.py`, or `curl`.
 
-**Built-in MCP tools (on `dev`):**
+**MCP tools:**
 
-| Tool | What it does |
-|---|---|
-| `GetRobotStatus` | Returns current pose, superstructure state, elevator height, arm angle, reef distances |
-| `DriveToPoint` | Drives robot to (x, y, theta) on the field using PID auto-align |
-| `SetSuperstructureState` | Sets elevator/arm target: STOW, TOP, L2_ALGAE, L3_ALGAE, GROUND_ALGAE, BARGE_RIGHT, CLIMB |
-| `StopRobot` | Immediately stops all movement and clears active trajectories |
+| Tool | Arguments | What it does |
+|---|---|---|
+| `GetRobotStatus` | none | Current pose, superstructure state, elevator height, arm angle, reef distances, and whether coral is detected (with its position) |
+| `DriveToPoint` | `x`, `y` (m), `theta` (degrees) | Drives to a field-absolute pose with the PID auto-align controller |
+| `MoveRelative` | `forward`, `left` (m) | Moves relative to the robot's current position and heading |
+| `RotateRobot` | `degrees` (+ = counterclockwise) | Rotates in place by an angle |
+| `ScanForCoral` | none | Rotates up to 360° and stops early if the object-detection camera sees coral |
+| `IntakeClosestObject` | none | Drives to the closest detected coral with the intake running |
+| `SetSuperstructureState` | `state` | Sets elevator/arm target: STOW, TOP, L2_ALGAE, L3_ALGAE, GROUND_ALGAE, BARGE_RIGHT, CLIMB |
+| `StopRobot` | none | Stops all movement and clears active trajectories |
 
 **HTTP endpoints (`MCPServer.java`):**
 
@@ -73,9 +87,14 @@ This is the software that runs on the Iron Panthers competition robot for the 20
 | POST | `/mcp/v1/tools/call` | body `{"name": "<tool>", "arguments": {...}}` → `{"content": {...}}` |
 | GET | `/mcp/v1/prompts/list` | `{"prompts":[]}` |
 
-### LLM agent (on the `feat/mcp-robot` branch)
+### The GPT agent (`openai_robot_control.py`)
 
-The GPT-4o-mini agent loop, `openai_robot_control.py`, and the larger tool set it uses (`ScanForCoral`, `IntakeClosestObject`, `MoveRelative`, `RotateRobot`, plus the four above, as classes in `src/main/java/frc/robot/mcp/tools/`) live on the [`feat/mcp-robot`](https://github.com/bruce-peters/FRC-2025-GPT/tree/feat/mcp-robot) branch and are not merged into `dev` yet. That script converts the robot's tool list into OpenAI function definitions, injects `GetRobotStatus` output before every model turn, and executes the tool calls the model makes. It reads `OPENAI_API_KEY` (and optionally `ROBOT_URL`, default `http://localhost:3000`) from a `.env` file (copy `.env.example` to `.env`; `.env` is git-ignored) and needs `pip install openai python-dotenv requests`. Calls to the OpenAI API are billed to that key.
+1. Fetches `tools/list` from the robot and converts each tool's JSON schema into an OpenAI function definition.
+2. On every turn, calls `GetRobotStatus` and appends the result to the prompt, so the model always sees the current pose, superstructure state and coral detections.
+3. Streams a `gpt-4o-mini` response with function calling. The model gives a short reason and then calls tools.
+4. Executes each tool call over HTTP, feeds the result back, and loops (up to 100 iterations) until the model answers without a tool call.
+
+The system prompt gives the model the field size, reef locations, and a coral-collection strategy (scan → intake → explore elsewhere). General questions are answered without touching the robot.
 
 ## Run it
 
@@ -88,7 +107,8 @@ Tested on Linux with OpenJDK 17.0.20 and Python 3.13. Commands are for macOS/Lin
   - Linux: `sudo apt install openjdk-17-jdk` or equivalent
   - Make sure `JAVA_HOME` points at it (`java -version` should print 17).
 - Internet access on the first build: Gradle downloads WPILib and the vendor libraries in `vendordeps/` (about 1 GB, cached in `~/.gradle` afterwards).
-- **Python 3** for the MCP client.
+- **Python 3** for the MCP client and the agent.
+- **An OpenAI API key**, only for the GPT agent (step 4). Usage is billed to that key.
 
 ### 1. Clone and build
 
@@ -115,7 +135,7 @@ MCP: Registered tool 'DriveToPoint'
 ********** Robot program startup complete **********
 ```
 
-The robot starts **disabled**. In the Simulation GUI's *Robot State* panel, click **Teleoperated** (or Autonomous) to enable it. While disabled, tools still answer but nothing moves: `DriveToPoint` is accepted without motion, and the superstructure stays in `ZEROING` (the elevator zeroes by driving down until it sees a current spike), so `SetSuperstructureState` returns an error until the robot is enabled.
+The robot starts **disabled**. In the Simulation GUI's *Robot State* panel, click **Teleoperated** (or Autonomous) to enable it. While disabled, tools still answer, but nothing moves and motion tools return immediately (e.g. `ScanForCoral` reports a finished scan with `total_rotation_degrees: 0`). The superstructure also stays in `ZEROING` while disabled, so `SetSuperstructureState` returns an error. Once enabled, it zeroes and switches to `STOW` within a moment.
 
 ### 3. Talk to the robot
 
@@ -145,7 +165,7 @@ It asks for a mode: `1` connects and lists tools, `2` reads the pose and (after 
   Tool name: DriveToPoint
   x (required, number): 4.5
   y (required, number): 4.0
-  theta (required, number): 1.57
+  theta (required, number): 90
 ```
 
 Or call tools directly from Python:
@@ -157,13 +177,26 @@ client = RobotMCPClient(robot_ip="localhost", port=3000)
 client.check_health()
 client.initialize()
 client.call_any_tool("GetRobotStatus")
-client.call_any_tool("DriveToPoint", x=4.5, y=4.0, theta=1.57)
+client.call_any_tool("DriveToPoint", x=4.5, y=4.0, theta=90)
 client.call_any_tool("StopRobot")
 ```
 
 The client connects to `localhost:3000`. For a real robot, pass the roboRIO address instead, e.g. `RobotMCPClient(robot_ip="10.50.26.2")`.
 
-### 4. Watch it in AdvantageScope (optional)
+### 4. Run the GPT agent
+
+**Needs an OpenAI API key.** Every turn calls the OpenAI API (`gpt-4o-mini`), and usage is billed to the key's account.
+
+```bash
+cp .env.example .env            # then put your key in .env: OPENAI_API_KEY=sk-...
+.venv/bin/python openai_robot_control.py
+```
+
+With the simulation running and the robot enabled, type a request at the `[You]:` prompt, e.g. `scan for coral and pick it up`. The script prints the model's reasoning, each tool call, and each result, until it gives a final answer. Type `quit` to exit. Set `ROBOT_URL` in `.env` to drive a real robot instead of `http://localhost:3000`.
+
+*Tested here:* startup, the robot connection check, converting the 8 tools to OpenAI functions, status injection, and the clear error when `OPENAI_API_KEY` is missing. *Not tested here:* live model calls, because no key was available.
+
+### 5. Watch it in AdvantageScope (optional)
 
 In simulation, AdvantageKit publishes all logged data over NetworkTables 4 (`NT4Publisher`). Open [AdvantageScope](https://github.com/Mechanical-Advantage/AdvantageScope/releases) and use *File → Connect to Simulator* to watch the robot pose and other logged outputs (e.g. PathPlanner targets) live while the AI drives. The `advantage_scope_files/Robot_SprintBot/` folder is a custom 3D robot model; copy it into AdvantageScope's assets folder (*Help → Show Assets Folder*, see [custom assets](https://docs.advantagescope.org/more-features/custom-assets)) to use it in the 3D Field view. *(AdvantageScope steps not tested in this environment.)*
 
@@ -199,6 +232,7 @@ src/main/java/frc/robot/
     MCPTools.java              dynamic tool registry
     MCPTool.java               tool interface
     MCPToolSchemas.java        JSON schema helpers
+    tools/                     the 8 tools (DriveToPointTool, ScanForCoralTool, ...)
   subsystems/
     swerve/                    swerve drive (Drive.java, Module.java, gyro IOs)
     superstructure/            elevator + arm state machine
@@ -209,9 +243,10 @@ src/main/java/frc/robot/
     vision/                    AprilTag cameras
     rgb/                       LED control
   commands/                   named commands (ApproachReef, IntakeObject, ScoreL1, ...)
-mcp_client.py                  Python client for AI agent integration
-requirements.txt               Python dependencies for mcp_client.py
-.env.example                   OPENAI_API_KEY placeholder for the GPT agent (feat/mcp-robot)
+openai_robot_control.py        GPT-4o-mini agent that drives the robot through the MCP tools
+mcp_client.py                  Python client for calling tools by hand
+requirements.txt               Python dependencies (requests, openai, python-dotenv)
+.env.example                   OPENAI_API_KEY / ROBOT_URL template for the agent
 MCP_DYNAMIC_TOOLS.md           guide to registering new MCP tools
 advantage_scope_files/         custom AdvantageScope robot model
 build.gradle                   dependencies, deploy config, Spotless
@@ -219,7 +254,8 @@ build.gradle                   dependencies, deploy config, Spotless
 
 ## Notes and limitations
 
-- Tool handlers run on the HTTP server's thread pool, not the robot's main loop, and call `Command.schedule()` from there. WPILib's `CommandScheduler` is not thread-safe, so concurrent tool calls could race with the 20 ms loop. Fine for interactive testing; for competition use, queue tool actions and drain the queue in `robotPeriodic()`.
+- Tool handlers run on the HTTP server's thread pool, not the robot's main loop. They call `Command.schedule()` from there and then spin (`Thread.yield()`) until the command finishes. WPILib's `CommandScheduler` is not thread-safe, so concurrent tool calls could race with the 20 ms loop. That is fine for interactive testing. For competition use, queue tool actions and drain the queue in `robotPeriodic()`.
+- In simulation (Red 1, default start pose), `DriveToPoint` and `RotateRobot` ended about 180° away from the requested heading and returned `"Robot ... stuck"` / `success: false`, while the translation part moved as expected. Likely cause: the heading controller in `Drive.java` uses gyro-relative yaw (`arbitraryYaw`), while tool targets and success checks use the field-relative pose. Zeroing the gyro facing the field +x direction, or converting the target heading, should fix it. Not changed here.
 - `DriveToPoint` drives straight with the auto-align PID controller; it does not path-plan around the reef.
 - The MCP server has no authentication. Anyone on the robot network can call tools.
 
@@ -232,7 +268,7 @@ build.gradle                   dependencies, deploy config, Spotless
 
 ## Status
 
-Active development. The core robot code was used in competition during the 2025 FRC REEFSCAPE season (Iron Panthers won the World Championship). The MCP/AI integration layer is an ongoing offseason addition, currently functional for simulation and local testing. The dynamic tool system is complete. The LLM agent loop and the expanded tool set are on the `feat/mcp-robot` branch and not yet merged into `dev`.
+Active development. The core robot code was used in competition during the 2025 FRC REEFSCAPE season (Iron Panthers won the World Championship). The MCP/AI integration layer is an ongoing offseason addition, currently functional for simulation and local testing. The dynamic tool system, the 8-tool set, and the GPT-4o-mini agent loop are complete.
 
 ---
 
