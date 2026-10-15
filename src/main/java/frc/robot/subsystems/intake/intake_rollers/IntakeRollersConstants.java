@@ -6,7 +6,7 @@ public class IntakeRollersConstants {
   public static final int ID =
       switch (Constants.getRobotType()) {
         case COMP -> 40;
-        case SIM -> 32;
+        case SIM -> 40;
         default -> 0;
       };
   public static final int CURRENT_LIMIT_AMPS =
@@ -18,7 +18,7 @@ public class IntakeRollersConstants {
   public static final boolean INVERTED =
       switch (Constants.getRobotType()) {
         case COMP -> true;
-        case SIM -> true;
+        case SIM -> false;
         default -> true;
       };
   public static final boolean BRAKE =

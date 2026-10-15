@@ -139,6 +139,8 @@ wpi.java.configureTestTasks(test)
 // Configure string concat to always inline compile
 tasks.withType(JavaCompile) {
     options.compilerArgs.add '-XDstringConcat=inline'
+    // Sources contain UTF-8 (e.g. the degree sign in MCP tool messages); don't depend on the OS locale
+    options.encoding = 'UTF-8'
 }
 
 // Create version file
